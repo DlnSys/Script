@@ -1,325 +1,403 @@
 #!/bin/bash
 
-set -euo pipefail  # Mode strict au niveau du script (sécurité ++)
+# Script de déploiement automatisé de clés SSH
+# Auteur: Assistant IA
+# Version: 1.0
 
-# === Paramètres généraux ===
-readonly SCRIPT_NAME="$(basename "$0")"
-readonly LOG_FILE="/var/log/ssh_deployment_$(date +%Y%m%d_%H%M%S).log"
-readonly DEFAULT_KEY="$HOME/.ssh/id_ed25519.pub"
+set -euo pipefail
 
-# Couleurs (affichage console)
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
+# Configuration
+LOG_FILE="ssh_deploy.log"
+DEFAULT_KEY_PATH="$HOME/.ssh/id_ed25519"
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+USER=$(whoami)
 
-# === Fonction de log améliorée ===
+# Couleurs pour l'affichage
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Tableaux pour stocker les informations
+declare -a SERVERS=()
+declare -a DEPLOY_STATUS=()
+
+# Fonction de logging
 log() {
-    local level="$1"; shift
+    local level="$1"
+    shift
     local message="$*"
-    local timestamp
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
-}
-
-# Affichage avec couleurs
-print_status() {
-    local status="$1"
-    local message="$2"
-    case "$status" in
-        INFO)    echo -e "${BLUE}[ℹ]${NC} $message" ;;
-        SUCCESS) echo -e "${GREEN}[✓]${NC} $message" ;;
-        WARNING) echo -e "${YELLOW}[⚠]${NC} $message" ;;
-        ERROR)   echo -e "${RED}[✗]${NC} $message" ;;
-        *)       echo -e "[?] $message" ;;
+    echo "[$TIMESTAMP] [$level] $message" >> "$LOG_FILE"
+    
+    case "$level" in
+        "INFO") echo -e "${BLUE}[INFO]${NC} $message" ;;
+        "SUCCESS") echo -e "${GREEN}[SUCCÈS]${NC} $message" ;;
+        "ERROR") echo -e "${RED}[ERREUR]${NC} $message" ;;
+        "WARNING") echo -e "${YELLOW}[ATTENTION]${NC} $message" ;;
     esac
-    log "$status" "$message"
 }
 
-# Vérifie si une chaîne est une IP valide (IPv4)
-validate_ip() {
-    local ip="$1"
-    if [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        IFS='.' read -ra octets <<< "$ip"
-        for octet in "${octets[@]}"; do
-            if ((octet < 0 || octet > 255)); then
-                return 1
-            fi
-        done
-        return 0
-    fi
-    return 1
+# Fonction pour afficher l'en-tête
+show_header() {
+    clear
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║             DÉPLOIEMENT AUTOMATISÉ DE CLÉS SSH               ║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    log "INFO" "Démarrage du script de déploiement SSH"
 }
 
-# Vérifie le format utilisateur@host
-validate_server_format() {
-    local server="$1"
-    if [[ ! $server =~ ^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$ ]]; then
-        return 1
-    fi
-    local user="${server%@*}"
-    local host="${server#*@}"
-    if [[ $user =~ [[:space:]$\`\'\"] ]]; then
-        return 1
-    fi
-    if validate_ip "$host" || [[ $host =~ ^[a-zA-Z0-9.-]+$ ]]; then
-        return 0
-    fi
-    return 1
-}
-
-# Teste la connectivité SSH à une machine
-test_ssh_connectivity() {
-    local server="$1"
-    print_status "INFO" "Test de connectivité vers $server..."
-    if timeout 10 ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$server" exit 2>/dev/null; then
+# Fonction pour générer une nouvelle clé SSH
+generate_ssh_key() {
+    local key_path="$1"
+    local comment="$2"
+    
+    log "INFO" "Génération d'une nouvelle clé Ed25519..."
+    
+    if ssh-keygen -t ed25519 -f "$key_path" -C "$comment" -N ""; then
+        log "SUCCESS" "Clé SSH générée avec succès : ${key_path}"
         return 0
     else
+        log "ERROR" "Échec de la génération de la clé SSH"
         return 1
     fi
 }
 
-# Génère une paire de clés SSH Ed25519 si besoin
-generate_ssh_key_pair() {
-    local private_key_path="$HOME/.ssh/id_ed25519"
-    local public_key_path="$HOME/.ssh/id_ed25519.pub"
-
-    print_status "INFO" "Génération d'une nouvelle paire de clés SSH Ed25519"
-
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
-
-    local hostname
-    hostname=$(hostname 2>/dev/null || echo "unknown")
-    local default_comment="$USER@$hostname-$(date +%Y%m%d)"
-
-    echo ""
-    print_status "INFO" "Configuration du commentaire de la clé SSH (option -C)"
-    echo "Le commentaire permet d'identifier facilement la clé dans les logs et authorized_keys"
-    echo ""
-    echo "Exemples de commentaires :"
-    echo "  • utilisateur@prod"
-    echo "  • utilisateur@prod-$(date +%Y%m%d)              (avec date)"
-    echo "  • prod-servers             (par usage)"
-    echo "  • deploy-key-$(date +%Y%m%d)                (clé de déploiement)"
-    echo "  • $default_comment        (proposition par défaut)"
-    echo ""
-
-    read -rp "Commentaire pour la clé SSH (-C) : " key_comment < /dev/tty
-    [[ -z "$key_comment" ]] && key_comment="$default_comment"
-
-    if [[ "$key_comment" =~ [\"\'\\] ]]; then
-        print_status "ERROR" "Le commentaire ne peut pas contenir de guillemets ou antislash"
-        return 1
-    fi
-
-    print_status "INFO" "Génération avec commentaire : $key_comment"
-    # Redirection explicite pour éviter les conflits avec les pipes
-    if ssh-keygen -t ed25519 -f "$private_key_path" -C "$key_comment" -N "" < /dev/null; then
-        chmod 600 "$private_key_path"
-        chmod 644 "$public_key_path"
-        print_status "SUCCESS" "Clé générée : $public_key_path"
-        echo "$public_key_path"
-        return 0
-    else
-        print_status "ERROR" "Échec de la génération de la clé SSH"
-        return 1
-    fi
-}
-
-# Choix interactif de la clé à utiliser
-select_or_create_ssh_key() {
-    local key_path=""
-    print_status "INFO" "=== Gestion de la clé SSH publique ==="
-
-    if [[ -f "$DEFAULT_KEY" ]]; then
-        print_status "SUCCESS" "Clé par défaut trouvée : $DEFAULT_KEY"
-        local key_info
-        key_info=$(ssh-keygen -l -f "$DEFAULT_KEY" 2>/dev/null || echo "Clé invalide")
-        echo "Informations : $key_info"
-        read -rp "Utiliser cette clé existante ? [O/n] : " use_default < /dev/tty
-        if [[ "${use_default,,}" != "n" ]]; then
-            key_path="$DEFAULT_KEY"
-        fi
-    fi
-
-    if [[ -z "$key_path" ]]; then
-        echo ""
-        echo "Options disponibles :"
-        echo "1. Générer une nouvelle paire de clés Ed25519 (recommandé)"
-        echo "2. Spécifier le chemin d'une clé existante"
-        echo ""
-        while true; do
-            read -rp "Votre choix [1-2] : " key_choice < /dev/tty
-            echo "Choix sélectionné : $key_choice"  # Debug : affichage du choix
-            case "$key_choice" in
-                1)
-                    print_status "INFO" "Génération d'une nouvelle clé..."
-                    if key_path=$(generate_ssh_key_pair); then
-                        break
-                    else
-                        print_status "ERROR" "Échec de la génération, veuillez réessayer"
-                    fi
-                    ;;
-                2)
-                    while true; do
-                        read -rp "Chemin vers votre clé publique SSH : " key_input < /dev/tty
-                        echo "Chemin saisi : $key_input"  # Debug
-                        key_path="${key_input/#\~/$HOME}"  # Expansion du tilde
-                        if [[ -f "$key_path" ]]; then
-                            break
-                        else
-                            print_status "ERROR" "Fichier introuvable : $key_path"
-                            read -rp "Réessayer ? [O/n] : " retry < /dev/tty
-                            [[ "${retry,,}" == "n" ]] && return 1
-                        fi
-                    done
-                    break
-                    ;;
-                *)
-                    print_status "ERROR" "Choix invalide : $key_choice"
-                    ;;
-            esac
-        done
-    fi
-
-    # Vérifie la validité de la clé sélectionnée
-    if [[ -z "$key_path" ]]; then
-        print_status "ERROR" "Aucune clé sélectionnée"
-        return 1
-    fi
-
-    if ! ssh-keygen -l -f "$key_path" &>/dev/null; then
-        print_status "ERROR" "Fichier de clé SSH invalide : $key_path"
-        return 1
-    fi
-
-    local final_key_info
-    final_key_info=$(ssh-keygen -l -f "$key_path" 2>/dev/null || echo "Informations indisponibles")
-    print_status "SUCCESS" "Clé SSH validée : $final_key_info"
+# Fonction pour trouver un nom de clé disponible
+find_available_key_name() {
+    local base_name="$1"
+    local counter=1
+    local key_path="$base_name"
+    
+    while [[ -f "$key_path" ]]; do
+        key_path="${base_name}_${counter}"
+        ((counter++))
+    done
+    
     echo "$key_path"
 }
 
-# Saisie des serveurs cibles (format utilisateur@serveur)
-collect_servers() {
-    local servers=()
-    print_status "INFO" "Collecte des serveurs cibles (format attendu : utilisateur@ip ou utilisateur@hostname)"
-    echo "Tapez 'non' pour terminer la saisie."
+# Fonction pour gérer la clé SSH
+handle_ssh_key() {
+    echo -e "${YELLOW}=== GESTION DE LA CLÉ SSH ===${NC}"
+    echo
+    echo "Options disponibles :"
+    echo "1) Générer une nouvelle paire de clés Ed25519"
+    echo "2) Utiliser une clé publique existante"
+    echo
+    
     while true; do
-        read -rp "Quelle id@serveur voulez-vous renseigner (ou 'non' pour arrêter) : " server_input < /dev/tty
-        echo "Serveur saisi : '$server_input'"  # Debug
-        if [[ "${server_input,,}" == "non" ]]; then
-            break
-        fi
-        [[ -z "$server_input" ]] && continue
-        if validate_server_format "$server_input"; then
-            if [[ " ${servers[*]} " == *" $server_input "* ]]; then
-                print_status "WARNING" "Serveur déjà ajouté : $server_input"
-            else
-                servers+=("$server_input")
-                print_status "SUCCESS" "Serveur ajouté : $server_input"
-            fi
-        else
-            print_status "ERROR" "Format invalide. Utilisez : utilisateur@ip ou utilisateur@hostname"
-        fi
+        read -p "Votre choix (1 ou 2) : " choice
+        case "$choice" in
+            1)
+                # Génération d'une nouvelle clé
+                echo
+                echo "Suggestions de commentaires :"
+                echo "1) ${USER}@prod"
+                echo "2) ${USER}@prod-$(date +%Y%m%d)"
+                echo "3) deploy-key-$(date +%Y%m%d)"
+                echo "4) Commentaire personnalisé"
+                echo
+                
+                read -p "Choisissez un commentaire (1-4) ou appuyez sur Entrée pour '${USER}@deploy-$(date +%Y%m%d)' : " comment_choice
+                
+                case "$comment_choice" in
+                    1) COMMENT="${USER}@prod" ;;
+                    2) COMMENT="${USER}@prod-$(date +%Y%m%d)" ;;
+                    3) COMMENT="deploy-key-$(date +%Y%m%d)" ;;
+                    4) 
+                        read -p "Entrez votre commentaire personnalisé : " COMMENT
+                        [[ -z "$COMMENT" ]] && COMMENT="${USER}@deploy-$(date +%Y%m%d)"
+                        ;;
+                    *) COMMENT="${USER}@deploy-$(date +%Y%m%d)" ;;
+                esac
+                
+                # Vérifier si la clé existe déjà et proposer des alternatives
+                if [[ -f "$DEFAULT_KEY_PATH" ]]; then
+                    echo
+                    log "INFO" "Une clé existe déjà à $DEFAULT_KEY_PATH"
+                    echo "Options :"
+                    echo "1) Remplacer la clé existante"
+                    echo "2) Créer une nouvelle clé avec un nom différent"
+                    echo "3) Utiliser la clé existante"
+                    echo
+                    
+                    read -p "Votre choix (1-3) : " key_option
+                    case "$key_option" in
+                        1)
+                            read -p "Confirmer le remplacement de la clé existante ? (o/N) : " replace
+                            if [[ ! "$replace" =~ ^[oO]$ ]]; then
+                                echo "Opération annulée."
+                                continue
+                            fi
+                            CHOSEN_KEY_PATH="$DEFAULT_KEY_PATH"
+                            ;;
+                        2)
+                            CHOSEN_KEY_PATH=$(find_available_key_name "$DEFAULT_KEY_PATH")
+                            log "INFO" "Nouvelle clé sera créée : $CHOSEN_KEY_PATH"
+                            ;;
+                        3)
+                            PUBLIC_KEY_PATH="${DEFAULT_KEY_PATH}.pub"
+                            log "SUCCESS" "Utilisation de la clé existante : $PUBLIC_KEY_PATH"
+                            break
+                            ;;
+                        *)
+                            echo "Choix invalide."
+                            continue
+                            ;;
+                    esac
+                else
+                    CHOSEN_KEY_PATH="$DEFAULT_KEY_PATH"
+                fi
+                
+                if generate_ssh_key "$CHOSEN_KEY_PATH" "$COMMENT"; then
+                    PUBLIC_KEY_PATH="${CHOSEN_KEY_PATH}.pub"
+                    break
+                else
+                    echo "Échec de la génération. Veuillez réessayer."
+                fi
+                ;;
+            2)
+                # Utilisation d'une clé existante
+                echo
+                read -p "Chemin vers la clé publique [${DEFAULT_KEY_PATH}.pub] : " key_input
+                PUBLIC_KEY_PATH="${key_input:-${DEFAULT_KEY_PATH}.pub}"
+                
+                if [[ ! -f "$PUBLIC_KEY_PATH" ]]; then
+                    log "ERROR" "Clé publique introuvable : $PUBLIC_KEY_PATH"
+                    continue
+                fi
+                
+                log "SUCCESS" "Clé publique trouvée : $PUBLIC_KEY_PATH"
+                break
+                ;;
+            *)
+                echo "Choix invalide. Veuillez saisir 1 ou 2."
+                ;;
+        esac
     done
-    if [[ ${#servers[@]} -eq 0 ]]; then
-        print_status "ERROR" "Aucun serveur spécifié"
-        return 1
-    fi
-    printf '%s\n' "${servers[@]}"
+    
+    # Afficher le contenu de la clé publique
+    echo
+    echo -e "${GREEN}Clé publique à déployer :${NC}"
+    echo "$(cat "$PUBLIC_KEY_PATH")"
+    echo
 }
 
-# Déploiement sur un serveur donné
-deploy_key_to_server() {
-    local key_path="$1"
-    local server="$2"
-    print_status "INFO" "Déploiement vers $server"
-    if ! test_ssh_connectivity "$server"; then
-        print_status "ERROR" "Impossible de se connecter à $server"
-        return 1
+# Fonction pour collecter les serveurs cibles
+collect_servers() {
+    echo -e "${YELLOW}=== COLLECTE DES SERVEURS CIBLES ===${NC}"
+    echo
+    echo "Format attendu : utilisateur@ip ou utilisateur@hostname"
+    echo "Tapez 'non' pour terminer la saisie"
+    echo
+    
+    local server_count=1
+    while true; do
+        read -p "Serveur #$server_count : " server
+        
+        if [[ "$server" == "non" ]] || [[ "$server" == "n" ]]; then
+            break
+        fi
+        
+        if [[ -z "$server" ]]; then
+            continue
+        fi
+        
+        # Validation basique du format
+        if [[ ! "$server" =~ ^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$ ]]; then
+            log "WARNING" "Format invalide. Utilisez : utilisateur@hostname"
+            continue
+        fi
+        
+        SERVERS+=("$server")
+        log "INFO" "Serveur ajouté : $server"
+        ((server_count++))
+    done
+    
+    if [[ ${#SERVERS[@]} -eq 0 ]]; then
+        log "ERROR" "Aucun serveur spécifié"
+        exit 1
     fi
-    if ssh-copy-id -i "$key_path" "$server" 2>&1 | tee -a "$LOG_FILE"; then
-        print_status "SUCCESS" "Clé déployée avec succès sur $server"
+    
+    echo
+    log "SUCCESS" "${#SERVERS[@]} serveur(s) collecté(s)"
+}
+
+# Fonction pour tester la connectivité SSH
+test_connectivity() {
+    local server="$1"
+    log "INFO" "Test de connectivité vers $server..."
+    
+    # Timeout de 10 secondes pour le test
+    if timeout 10 ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$server" "exit" 2>/dev/null; then
+        log "SUCCESS" "Connexion SSH réussie (clé déjà déployée) : $server"
+        return 0
+    elif timeout 10 ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$server" "exit" 2>/dev/null; then
+        log "SUCCESS" "Connexion SSH possible : $server"
         return 0
     else
-        print_status "ERROR" "Échec du déploiement sur $server"
+        log "WARNING" "Connexion SSH échouée ou nécessite un mot de passe : $server"
         return 1
+    fi
+}
+
+# Fonction pour déployer la clé SSH
+deploy_key() {
+    local server="$1"
+    log "INFO" "Déploiement de la clé vers $server..."
+    
+    # Utilisation de ssh-copy-id avec options robustes
+    if ssh-copy-id -o StrictHostKeyChecking=no -i "$PUBLIC_KEY_PATH" "$server" 2>/dev/null; then
+        log "SUCCESS" "Clé déployée avec succès : $server"
+        DEPLOY_STATUS+=("SUCCESS:$server")
+        return 0
+    else
+        log "ERROR" "Échec du déploiement : $server"
+        DEPLOY_STATUS+=("FAILED:$server")
+        return 1
+    fi
+}
+
+# Fonction pour vérifier le déploiement
+verify_deployment() {
+    local server="$1"
+    log "INFO" "Vérification du déploiement vers $server..."
+    
+    if timeout 10 ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$server" "echo 'Connexion SSH sans mot de passe réussie'" 2>/dev/null; then
+        log "SUCCESS" "Vérification réussie : $server"
+        return 0
+    else
+        log "ERROR" "Vérification échouée : $server"
+        return 1
+    fi
+}
+
+# Fonction pour afficher le récapitulatif
+show_summary() {
+    echo
+    echo -e "${YELLOW}=== RÉCAPITULATIF ===${NC}"
+    echo
+    echo -e "${BLUE}Clé publique :${NC} $PUBLIC_KEY_PATH"
+    echo -e "${BLUE}Serveurs ciblés :${NC}"
+    
+    for server in "${SERVERS[@]}"; do
+        echo "  • $server"
+    done
+    
+    echo
+    echo -e "${BLUE}Logs :${NC} $LOG_FILE"
+    echo
+}
+
+# Fonction pour afficher les résultats finaux
+show_results() {
+    echo
+    echo -e "${YELLOW}=== RÉSULTATS DU DÉPLOIEMENT ===${NC}"
+    echo
+    
+    local success_count=0
+    local failed_count=0
+    
+    for status in "${DEPLOY_STATUS[@]}"; do
+        local result="${status%%:*}"
+        local server="${status##*:}"
+        
+        if [[ "$result" == "SUCCESS" ]]; then
+            echo -e "${GREEN}✓${NC} $server"
+            ((success_count++))
+        else
+            echo -e "${RED}✗${NC} $server"
+            ((failed_count++))
+        fi
+    done
+    
+    echo
+    echo -e "${GREEN}Réussis :${NC} $success_count"
+    echo -e "${RED}Échecs :${NC} $failed_count"
+    echo
+    
+    if [[ $success_count -gt 0 ]]; then
+        log "SUCCESS" "Déploiement terminé : $success_count réussi(s), $failed_count échec(s)"
+    else
+        log "ERROR" "Aucun déploiement réussi"
+    fi
+}
+
+# Fonction pour confirmer le déploiement
+confirm_deployment() {
+    echo
+    read -p "Voulez-vous procéder au déploiement ? (o/N) : " confirm
+    if [[ ! "$confirm" =~ ^[oO]$ ]]; then
+        log "INFO" "Déploiement annulé par l'utilisateur"
+        exit 0
     fi
 }
 
 # Fonction principale
-main_deploy() {
-    print_status "INFO" "=== Déploiement de clés SSH - Version Sécurisée ==="
+main() {
+    show_header
     
-    # Vérification des dépendances
-    if ! command -v ssh-copy-id &>/dev/null; then
-        print_status "ERROR" "ssh-copy-id n'est pas installé"
-        exit 1
-    fi
-    if ! command -v ssh-keygen &>/dev/null; then
-        print_status "ERROR" "ssh-keygen n'est pas installé"
-        exit 1
-    fi
-
-    # Création du répertoire de log si nécessaire
-    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || {
-        print_status "WARNING" "Impossible de créer le répertoire de log, utilisation de /tmp"
-        LOG_FILE="/tmp/ssh_deployment_$(date +%Y%m%d_%H%M%S).log"
-    }
-
-    print_status "INFO" "Log disponible dans : $LOG_FILE"
-
-    # Sélection/Création de la clé SSH
-    local key_path
-    if ! key_path=$(select_or_create_ssh_key); then
-        print_status "ERROR" "Impossible de sélectionner/créer une clé SSH"
-        exit 1
-    fi
-    print_status "SUCCESS" "Clé SSH prête : $key_path"
-
-    # Collecte des serveurs (tableau)
-    local -a servers
-    if ! mapfile -t servers < <(collect_servers); then
-        print_status "ERROR" "Erreur lors de la collecte des serveurs"
-        exit 1
-    fi
-    print_status "INFO" "Serveurs à traiter : ${#servers[@]}"
-
-    # Récapitulatif
-    echo ""
-    echo "=== RÉCAPITULATIF ==="
-    echo "Clé SSH : $key_path"
-    echo "Serveurs :"
-    printf '  - %s\n' "${servers[@]}"
-    echo ""
-    read -rp "Confirmer le déploiement ? [o/N] : " confirm < /dev/tty
-    echo "Confirmation : $confirm"  # Debug
-    if [[ "${confirm,,}" != "o" ]]; then
-        print_status "INFO" "Déploiement annulé"
-        exit 0
-    fi
-
-    # Boucle de déploiement
-    local success_count=0
-    local total_count=${#servers[@]}
-    for server in "${servers[@]}"; do
-        if deploy_key_to_server "$key_path" "$server"; then
-            ((success_count++))
+    # Gestion de la clé SSH
+    handle_ssh_key
+    
+    # Collecte des serveurs
+    collect_servers
+    
+    # Affichage du récapitulatif
+    show_summary
+    
+    # Confirmation
+    confirm_deployment
+    
+    echo
+    echo -e "${YELLOW}=== DÉPLOIEMENT EN COURS ===${NC}"
+    echo
+    
+    # Test de connectivité et déploiement
+    for server in "${SERVERS[@]}"; do
+        echo -e "${BLUE}Traitement de $server...${NC}"
+        
+        # Test de connectivité
+        if ! test_connectivity "$server"; then
+            echo "  Connexion SSH nécessite probablement un mot de passe"
         fi
-        echo ""
+        
+        # Déploiement
+        if deploy_key "$server"; then
+            # Vérification du déploiement
+            sleep 1
+            verify_deployment "$server"
+        fi
+        
+        echo
     done
-
-    # Rapport final
-    print_status "INFO" "=== RAPPORT FINAL ==="
-    print_status "SUCCESS" "Déploiements réussis : $success_count/$total_count"
-    if [[ $success_count -eq $total_count ]]; then
-        print_status "SUCCESS" "Tous les déploiements ont réussi !"
-    else
-        print_status "WARNING" "Certains déploiements ont échoué. Consultez $LOG_FILE"
-    fi
+    
+    # Affichage des résultats
+    show_results
+    
+    echo
+    echo -e "${BLUE}Logs complets disponibles dans :${NC} $LOG_FILE"
+    echo -e "${GREEN}Script terminé avec succès !${NC}"
 }
 
-# === Point d'entrée ===
-main_deploy "$@"
+# Gestion des signaux pour un arrêt propre
+trap 'echo; log "WARNING" "Script interrompu par l'\''utilisateur"; exit 130' INT TERM
+
+# Vérification des prérequis
+if ! command -v ssh-keygen &> /dev/null; then
+    log "ERROR" "ssh-keygen n'est pas installé"
+    exit 1
+fi
+
+if ! command -v ssh-copy-id &> /dev/null; then
+    log "ERROR" "ssh-copy-id n'est pas installé"
+    exit 1
+fi
+
+# Création du répertoire SSH si nécessaire
+[[ ! -d "$HOME/.ssh" ]] && mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+
+# Exécution du script principal
+main "$@"
