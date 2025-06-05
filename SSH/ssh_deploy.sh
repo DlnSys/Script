@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script de déploiement automatisé de clés SSH
-# Auteur: Assistant IA
+# Auteur: DlnSys
 # Version: 1.0
 
 set -euo pipefail
