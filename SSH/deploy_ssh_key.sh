@@ -56,7 +56,7 @@ deploy_ssh_key_interactive() {
         fi
         local user="${server%@*}"
         local host="${server#*@}"
-        if [[ "$user" =~ [[:space:]`'"\\$] ]]; then
+        if [[ "$user" =~ [[:space:]\"\'\\$] ]]; then
             return 1
         fi
         if validate_ip "$host" || [[ $host =~ ^[a-zA-Z0-9.-]+$ ]]; then
@@ -287,6 +287,8 @@ deploy_ssh_key_interactive() {
         print_status "INFO" "=== RAPPORT FINAL ==="
         print_status "SUCCESS" "Déploiements réussis : $success_count/$total_count"
 
+        success_count=${success_count:-0}
+        total_count=${total_count:-0}
         if [[ $success_count -eq $total_count ]]; then
             print_status "SUCCESS" "Tous les déploiements ont réussi !"
         else
