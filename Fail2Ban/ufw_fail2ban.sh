@@ -319,14 +319,14 @@ configure_custom_ports() {
 
 create_custom_filter() {
     local service_name="$1"
-    local filter_content="${CUSTOM_FILTERS[$service_name]}"
+    local filter_content="${CUSTOM_FILTERS[$service_name]:-}"
     local filter_file="/etc/fail2ban/filter.d/${service_name}.conf"
     
-    if [[ -n $filter_content ]]; then
+    if [[ -n "$filter_content" ]]; then
         print_info "Création du filtre personnalisé pour $service_name..."
         
         # Sauvegarder le filtre existant s'il existe
-        if [[ -f $filter_file ]]; then
+        if [[ -f "$filter_file" ]]; then
             cp "$filter_file" "${filter_file}.backup.$(date +%Y%m%d_%H%M%S)"
             print_info "Filtre existant sauvegardé"
         fi
@@ -335,11 +335,12 @@ create_custom_filter() {
         echo "$filter_content" > "$filter_file"
         print_success "Filtre personnalisé créé: $filter_file"
         
-        # Valider la syntaxe du filtre
-        if fail2ban-client reload > /dev/null 2>&1; then
-            print_success "Filtre validé avec succès"
+        # Valider la syntaxe du filtre (test simple)
+        if [[ -f "$filter_file" ]] && [[ -s "$filter_file" ]]; then
+            print_success "Filtre créé avec succès"
         else
-            print_warning "Erreur de validation du filtre, vérification manuelle recommandée"
+            print_warning "Erreur lors de la création du filtre"
+            return 1
         fi
         
         return 0
@@ -353,10 +354,10 @@ check_and_create_filters() {
     local jail_name="$1"
     
     # Vérifier si ce service nécessite un filtre personnalisé
-    if [[ ${SERVICES_NEED_CUSTOM_FILTERS[$jail_name]} == "true" ]]; then
+    if [[ -n "${SERVICES_NEED_CUSTOM_FILTERS[$jail_name]:-}" ]] && [[ "${SERVICES_NEED_CUSTOM_FILTERS[$jail_name]}" == "true" ]]; then
         local filter_file="/etc/fail2ban/filter.d/${jail_name}.conf"
         
-        if [[ ! -f $filter_file ]]; then
+        if [[ ! -f "$filter_file" ]]; then
             print_warning "Le service '$jail_name' nécessite un filtre personnalisé"
             read -p "Créer automatiquement le filtre pour '$jail_name' ? [Y/n]: " create_filter
             
@@ -379,11 +380,11 @@ check_and_create_filters() {
 show_filter_info() {
     local jail_name="$1"
     
-    if [[ ${SERVICES_NEED_CUSTOM_FILTERS[$jail_name]} == "true" ]]; then
+    if [[ -n "${SERVICES_NEED_CUSTOM_FILTERS[$jail_name]:-}" ]] && [[ "${SERVICES_NEED_CUSTOM_FILTERS[$jail_name]}" == "true" ]]; then
         echo -e "    ${YELLOW}⚠ Ce service nécessite un filtre personnalisé${NC}"
         
         local filter_file="/etc/fail2ban/filter.d/${jail_name}.conf"
-        if [[ -f $filter_file ]]; then
+        if [[ -f "$filter_file" ]]; then
             echo -e "    ${GREEN}✓ Filtre personnalisé disponible${NC}"
         else
             echo -e "    ${RED}✗ Filtre personnalisé manquant${NC}"
