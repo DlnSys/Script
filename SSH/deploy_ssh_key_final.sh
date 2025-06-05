@@ -56,7 +56,7 @@ deploy_ssh_key_interactive() {
         fi
         local user="${server%@*}"
         local host="${server#*@}"
-        if [[ $user =~ [[:space:]$\`\'"] ]]; then
+        if [[ "$user" =~ [[:space:]\`\'\"\\$] ]]; then
             return 1
         fi
         if validate_ip "$host" || [[ $host =~ ^[a-zA-Z0-9.-]+$ ]]; then

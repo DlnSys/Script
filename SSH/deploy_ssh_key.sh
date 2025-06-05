@@ -1,25 +1,24 @@
 #!/bin/bash
 
 deploy_ssh_key_interactive() {
-    set -euo pipefail  # Mode strict
+    set -euo pipefail
 
-    # Configuration
     readonly SCRIPT_NAME="$(basename "$0")"
     readonly LOG_FILE="/var/log/ssh_deployment_$(date +%Y%m%d_%H%M%S).log"
     readonly DEFAULT_KEY="$HOME/.ssh/id_ed25519.pub"
 
-    # Couleurs pour l'affichage
     readonly RED='\033[0;31m'
     readonly GREEN='\033[0;32m'
     readonly YELLOW='\033[1;33m'
     readonly BLUE='\033[0;34m'
-    readonly NC='\033[0m' # No Color
+    readonly NC='\033[0m'
 
     log() {
         local level="$1"
         shift
         local message="$*"
-        local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        local timestamp
+        timestamp=$(date '+%Y-%m-%d %H:%M:%S')
         echo "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
     }
 
@@ -27,10 +26,10 @@ deploy_ssh_key_interactive() {
         local status="$1"
         local message="$2"
         case "$status" in
-            "INFO")  echo -e "${BLUE}[INFO]${NC} $message" ;;
-            "SUCCESS") echo -e "${GREEN}[OK]${NC} $message" ;;
-            "WARNING") echo -e "${YELLOW}[WARN]${NC} $message" ;;
-            "ERROR")   echo -e "${RED}[ERR]${NC} $message" ;;
+            INFO)    echo -e "${BLUE}[INFO]${NC} $message" ;;
+            SUCCESS) echo -e "${GREEN}[OK]${NC} $message" ;;
+            WARNING) echo -e "${YELLOW}[WARN]${NC} $message" ;;
+            ERROR)   echo -e "${RED}[ERR]${NC} $message" ;;
         esac
         log "$status" "$message"
     }
@@ -57,7 +56,7 @@ deploy_ssh_key_interactive() {
         fi
         local user="${server%@*}"
         local host="${server#*@}"
-        if [[ $user =~ [[:space:]$\`\'"] ]]; then
+        if [[ "$user" =~ [[:space:]`'"\\$] ]]; then
             return 1
         fi
         if validate_ip "$host" || [[ $host =~ ^[a-zA-Z0-9.-]+$ ]]; then
@@ -82,7 +81,6 @@ deploy_ssh_key_interactive() {
         local public_key_path="$HOME/.ssh/id_ed25519.pub"
 
         print_status "INFO" "Génération d'une nouvelle paire de clés SSH Ed25519"
-
         mkdir -p "$HOME/.ssh"
         chmod 700 "$HOME/.ssh"
 
@@ -112,7 +110,7 @@ deploy_ssh_key_interactive() {
         fi
 
         if [[ "$key_comment" =~ ["'\\] ]]; then
-            print_status "ERROR" "Le commentaire ne peut pas contenir de guillemets ou antislash"
+            print_status "ERROR" "Le commentaire ne peut pas contenir de guillemets ou d'antislash"
             return 1
         fi
 
@@ -123,14 +121,11 @@ deploy_ssh_key_interactive() {
             print_status "INFO" "Clé privée : $private_key_path"
             print_status "INFO" "Clé publique : $public_key_path"
             print_status "INFO" "Commentaire : $key_comment"
-
             chmod 600 "$private_key_path"
             chmod 644 "$public_key_path"
-
             echo ""
             print_status "SUCCESS" "Aperçu de la clé publique générée :"
             echo "$(head -c 80 "$public_key_path")... $key_comment"
-
             echo "$public_key_path"
         else
             print_status "ERROR" "Échec de la génération de la clé SSH"
@@ -145,23 +140,19 @@ deploy_ssh_key_interactive() {
         if [[ -f "$DEFAULT_KEY" ]]; then
             echo ""
             print_status "SUCCESS" "Clé par défaut trouvée : $DEFAULT_KEY"
-            local key_info
-            key_info=$(ssh-keygen -l -f "$DEFAULT_KEY" 2>/dev/null || echo "Clé invalide")
-            echo "Informations : $key_info"
             read -rp "Utiliser cette clé existante ? [O/n] : " use_default
-            if [[ ${use_default,,} != "n" ]]; then
+            if [[ "${use_default,,}" != "n" ]]; then
                 key_path="$DEFAULT_KEY"
             fi
-        else
-            print_status "INFO" "Aucune clé par défaut trouvée ($DEFAULT_KEY)"
         fi
 
         if [[ -z "$key_path" ]]; then
             echo ""
-            printf "Options disponibles :\n"
-            printf "  1. Générer une nouvelle paire de clés Ed25519 (recommandé)\n"
-            printf "  2. Spécifier le chemin d'une clé existante\n\n"
-            sleep 0.2
+            echo "Options disponibles :"
+            echo "  1. Générer une nouvelle paire de clés Ed25519"
+            echo "  2. Spécifier une clé publique existante"
+            echo ""
+
             read -rp "Votre choix [1-2] : " key_choice
             case "$key_choice" in
                 1) key_path=$(generate_ssh_key_pair) ;;
@@ -192,12 +183,118 @@ deploy_ssh_key_interactive() {
         local final_key_info
         final_key_info=$(ssh-keygen -l -f "$key_path" 2>/dev/null || echo "Informations indisponibles")
         print_status "SUCCESS" "Clé SSH validée : $final_key_info"
-
         echo "$key_path"
     }
 
-    # Les autres fonctions sont inchangées pour le moment...
-    # Tu pourras les ajouter ensuite selon tes besoins
+    collect_servers() {
+        local -a servers=()
+        print_status "INFO" "Collecte des serveurs cibles"
+        echo "Format attendu : utilisateur@ip ou utilisateur@hostname"
+        echo ""
+
+        while true; do
+            read -rp "Quelle id@serveur voulez-vous renseigner (répondez 'non' pour arrêter) : " server_input
+            if [[ "${server_input,,}" == "non" ]]; then break; fi
+            if [[ -z "$server_input" ]]; then continue; fi
+            if validate_server_format "$server_input"; then
+                local already_added=false
+                for existing_server in "${servers[@]}"; do
+                    if [[ "$existing_server" == "$server_input" ]]; then
+                        already_added=true; break
+                    fi
+                done
+                if [[ "$already_added" == "true" ]]; then
+                    print_status "WARNING" "Serveur déjà ajouté : $server_input"
+                else
+                    servers+=("$server_input")
+                    print_status "SUCCESS" "Serveur ajouté : $server_input"
+                fi
+            else
+                print_status "ERROR" "Format invalide"
+            fi
+        done
+
+        if [[ ${#servers[@]} -eq 0 ]]; then
+            print_status "ERROR" "Aucun serveur spécifié"
+            exit 1
+        fi
+
+        printf '%s
+' "${servers[@]}"
+    }
+
+    deploy_key_to_server() {
+        local key_path="$1"
+        local server="$2"
+        print_status "INFO" "Déploiement vers $server"
+        if ! test_ssh_connectivity "$server"; then
+            print_status "ERROR" "Impossible de se connecter à $server"
+            return 1
+        fi
+        if ssh-copy-id -i "$key_path" "$server" 2>&1 | tee -a "$LOG_FILE"; then
+            print_status "SUCCESS" "Clé déployée avec succès sur $server"
+            return 0
+        else
+            print_status "ERROR" "Échec du déploiement sur $server"
+            return 1
+        fi
+    }
+
+    main_deploy() {
+        print_status "INFO" "=== Déploiement de clés SSH - Version Sécurisée ==="
+        if ! command -v ssh-copy-id &>/dev/null; then
+            print_status "ERROR" "ssh-copy-id n'est pas installé"
+            exit 1
+        fi
+        if ! command -v ssh-keygen &>/dev/null; then
+            print_status "ERROR" "ssh-keygen n'est pas installé"
+            exit 1
+        fi
+
+        local key_path
+        key_path=$(select_or_create_ssh_key)
+        print_status "SUCCESS" "Clé SSH prête : $key_path"
+
+        local -a servers
+        readarray -t servers < <(collect_servers)
+
+        print_status "INFO" "Serveurs à traiter : ${#servers[@]}"
+
+        echo ""
+        echo "=== RÉCAPITULATIF ==="
+        echo "Clé SSH : $key_path"
+        echo "Serveurs :"
+        printf '  - %s
+' "${servers[@]}"
+        echo ""
+
+        read -rp "Confirmer le déploiement ? [o/N] : " confirm
+        if [[ "${confirm,,}" != "o" ]]; then
+            print_status "INFO" "Déploiement annulé"
+            exit 0
+        fi
+
+        local success_count=0
+        local total_count=${#servers[@]}
+
+        for server in "${servers[@]}"; do
+            if deploy_key_to_server "$key_path" "$server"; then
+                ((success_count++))
+            fi
+            echo ""
+        done
+
+        print_status "INFO" "=== RAPPORT FINAL ==="
+        print_status "SUCCESS" "Déploiements réussis : $success_count/$total_count"
+
+        if [[ $success_count -eq $total_count ]]; then
+            print_status "SUCCESS" "Tous les déploiements ont réussi !"
+        else
+            print_status "WARNING" "Certains déploiements ont échoué. Consultez $LOG_FILE"
+        fi
+    }
+
+    main_deploy "$@"
 }
 
 deploy_ssh_key_interactive "$@"
