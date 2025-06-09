@@ -3,7 +3,7 @@
 # ============================================================================
 # Description : Script interactif pour créer des OU, groupes et utilisateurs AD
 # Auteur : Administrateur système
-# Version : 1.1 - Corrigée
+# Version : 1.2 - Syntaxe corrigée
 # ============================================================================
 
 # Import du module Active Directory
@@ -98,10 +98,14 @@ function Initialize-Configuration {
                 $availableDomains = $forest.Domains | ForEach-Object {
                     try {
                         Get-ADDomain -Identity $_ -ErrorAction SilentlyContinue
-                    } catch { }
+                    } catch { 
+                        # Ignorer les erreurs de domaines inaccessibles
+                    }
                 } | Where-Object { $_ -ne $null }
             }
-        } catch { }
+        } catch { 
+            # Continuer avec le domaine courant uniquement
+        }
         
         if ($availableDomains.Count -gt 0) {
             Write-Host "Domaines Active Directory détectés :" -ForegroundColor Green
@@ -162,14 +166,16 @@ function Initialize-Configuration {
     }
     
     # Configuration de l'OU principale
-    Write-Host "`nConfiguration de l'OU principale :" -ForegroundColor Cyan
-    $Global:OUPrincipale = Read-Host "Entrez le nom de l'OU principale (sans le préfixe OU_)"
-    $Global:OUPrincipale = "OU_$($Global:OUPrincipale)"
+    Write-Host ""
+    Write-Host "Configuration de l'OU principale :" -ForegroundColor Cyan
+    $ouName = Read-Host "Entrez le nom de l'OU principale (sans le préfixe OU_)"
+    $Global:OUPrincipale = "OU_$ouName"
     
     Write-Log "OU principale configurée : $Global:OUPrincipale"
     
     # Configuration du mot de passe générique
-    Write-Host "`nConfiguration du mot de passe générique :" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Configuration du mot de passe générique :" -ForegroundColor Cyan
     do {
         $Global:MotDePasseGenerique = Read-Host "Entrez le mot de passe générique pour tous les utilisateurs" -AsSecureString
         $confirmPassword = Read-Host "Confirmez le mot de passe" -AsSecureString
@@ -185,7 +191,8 @@ function Initialize-Configuration {
     Write-Log "Mot de passe générique configuré"
     
     # Configuration du format d'email
-    Write-Host "`nConfiguration du format d'email :" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Configuration du format d'email :" -ForegroundColor Cyan
     Write-Host "Exemples de formats :"
     Write-Host "1. P.nom@domain (ex: J.dupont@entreprise.local)"
     Write-Host "2. prenom.nom@domain (ex: jean.dupont@entreprise.local)"
@@ -203,7 +210,8 @@ function Initialize-Configuration {
     
     Write-Log "Format d'email configuré : $Global:FormatEmail"
     
-    Write-Host "`nConfiguration terminée !" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Configuration terminée !" -ForegroundColor Green
     Read-Host "Appuyez sur Entrée pour continuer"
 }
 
@@ -233,7 +241,8 @@ function Create-OrganizationalUnits {
     
     # Création de l'OU pour les Domain Local
     $OUDomainLocal = "OU_DomainLocal"
-    Write-Host "`nCréation de l'OU pour les groupes Domain Local : $OUDomainLocal" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Création de l'OU pour les groupes Domain Local : $OUDomainLocal" -ForegroundColor Cyan
     
     if (Confirm-Action "Confirmer la création de l'OU '$OUDomainLocal'") {
         try {
@@ -246,7 +255,8 @@ function Create-OrganizationalUnits {
     }
     
     # Saisie des OU de services
-    Write-Host "`nSaisie des unités d'organisation de services :" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Saisie des unités d'organisation de services :" -ForegroundColor Cyan
     Write-Host "Entrez les noms des services/départements (le préfixe OU_ sera ajouté automatiquement)"
     Write-Host "Tapez 'fin' ou laissez vide pour terminer la saisie"
     Write-Host ""
@@ -270,7 +280,8 @@ function Create-OrganizationalUnits {
         }
     } while (![string]::IsNullOrWhiteSpace($serviceName) -and $serviceName -ne "fin")
     
-    Write-Host "`nOU créées :" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "OU créées :" -ForegroundColor Green
     $Global:OUList | ForEach-Object { Write-Host "  - $_" -ForegroundColor Green }
     
     Read-Host "Appuyez sur Entrée pour continuer"
@@ -366,7 +377,8 @@ function Create-SecurityGroups {
         }
     } while ($true)
     
-    Write-Host "`nGroupes à créer :" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Groupes à créer :" -ForegroundColor Green
     $Global:GroupesList | ForEach-Object {
         Write-Host "  - $($_.Name) ($($_.Type))" -ForegroundColor Green
     }
@@ -414,7 +426,8 @@ function Associate-GroupsToOUs {
         Write-Log "Groupe DL '$($group.Name)' associé automatiquement à OU_DomainLocal" "SUCCESS"
     }
     
-    Write-Host "`nAssociations terminées !" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Associations terminées !" -ForegroundColor Green
     Read-Host "Appuyez sur Entrée pour continuer"
 }
 
@@ -540,14 +553,16 @@ function Import-Users {
     }
     
     # Affichage des OU disponibles pour le choix de destination
-    Write-Host "`nOU disponibles pour les utilisateurs :" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "OU disponibles pour les utilisateurs :" -ForegroundColor Cyan
     for ($i = 0; $i -lt $Global:OUList.Count; $i++) {
         Write-Host "  $($i + 1). $($Global:OUList[$i])" -ForegroundColor Cyan
     }
     
     # Traitement de chaque utilisateur
     foreach ($user in $users) {
-        Write-Host "`nTraitement de l'utilisateur : $($user.prenom) $($user.nom)" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Traitement de l'utilisateur : $($user.prenom) $($user.nom)" -ForegroundColor Yellow
         
         # Génération de l'email selon le format choisi
         $email = switch ($Global:FormatEmail) {
@@ -623,7 +638,8 @@ function Import-Users {
         }
     }
     
-    Write-Host "`nImportation des utilisateurs terminée !" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Importation des utilisateurs terminée !" -ForegroundColor Green
     Read-Host "Appuyez sur Entrée pour continuer"
 }
 
@@ -674,10 +690,6 @@ function Start-ADAdministration {
 # ============================================================================
 
 function Get-ADSummary {
-    <#
-    .SYNOPSIS
-    Affiche un résumé de l'Active Directory
-    #>
     Show-Banner
     Write-Host "RÉSUMÉ DE L'ACTIVE DIRECTORY" -ForegroundColor Yellow
     Write-Host "=============================" -ForegroundColor Yellow
@@ -695,7 +707,8 @@ function Get-ADSummary {
         $groups = (Get-ADGroup -Filter *).Count
         $ous = (Get-ADOrganizationalUnit -Filter *).Count
         
-        Write-Host "`nStatistiques :" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "Statistiques :" -ForegroundColor Green
         Write-Host "  Utilisateurs : $users" -ForegroundColor White
         Write-Host "  Ordinateurs : $computers" -ForegroundColor White
         Write-Host "  Groupes : $groups" -ForegroundColor White
@@ -706,14 +719,11 @@ function Get-ADSummary {
         Write-Host "Erreur lors de la récupération des informations : $($_.Exception.Message)" -ForegroundColor Red
     }
     
-    Read-Host "`nAppuyez sur Entrée pour continuer"
+    Write-Host ""
+    Read-Host "Appuyez sur Entrée pour continuer"
 }
 
 function Remove-ADTestObjects {
-    <#
-    .SYNOPSIS
-    Supprime les objets de test créés par le script
-    #>
     Show-Banner
     Write-Host "SUPPRESSION DES OBJETS DE TEST" -ForegroundColor Yellow
     Write-Host "===============================" -ForegroundColor Yellow
@@ -743,10 +753,6 @@ function Remove-ADTestObjects {
 }
 
 function Show-Menu {
-    <#
-    .SYNOPSIS
-    Affiche le menu principal du script
-    #>
     do {
         Show-Banner
         Write-Host "MENU PRINCIPAL" -ForegroundColor Yellow
@@ -755,21 +761,23 @@ function Show-Menu {
         Write-Host "1. Exécuter le script complet d'administration AD" -ForegroundColor Cyan
         Write-Host "2. Afficher le résumé de l'Active Directory" -ForegroundColor Cyan
         Write-Host "3. Supprimer des objets de test" -ForegroundColor Cyan
-        Write-Host "4. Quitter" -ForegroundColor Cyan
+        Write-Host "4. Créer un fichier CSV d'exemple" -ForegroundColor Cyan
+        Write-Host "5. Quitter" -ForegroundColor Cyan
         Write-Host ""
         
-        $choice = Read-Host "Choisissez une option (1-4)"
+        $choice = Read-Host "Choisissez une option (1-5)"
         
         switch ($choice) {
             "1" { Start-ADAdministration }
             "2" { Get-ADSummary }
             "3" { Remove-ADTestObjects }
-            "4" { 
+            "4" { Create-SampleCSV }
+            "5" { 
                 Write-Host "Au revoir !" -ForegroundColor Green
                 return 
             }
             default { 
-                Write-Host "Option invalide. Veuillez choisir entre 1 et 4." -ForegroundColor Red
+                Write-Host "Option invalide. Veuillez choisir entre 1 et 5." -ForegroundColor Red
                 Start-Sleep -Seconds 2
             }
         }
@@ -781,25 +789,33 @@ function Show-Menu {
 # ============================================================================
 
 function Create-SampleCSV {
-    <#
-    .SYNOPSIS
-    Crée un fichier CSV d'exemple pour les utilisateurs
-    #>
+    Show-Banner
+    Write-Host "CRÉATION D'UN FICHIER CSV D'EXEMPLE" -ForegroundColor Yellow
+    Write-Host "====================================" -ForegroundColor Yellow
+    Write-Host ""
+    
     $csvContent = @"
 prenom,nom,fonction,Department_OU,GroupToAdd1,GroupToAdd2
 Jean,Dupont,Administrateur Système,IT,GG_IT_Admin,DL_IT_Admin_CT
 Marie,Martin,Développeuse,IT,GG_IT_Dev,DL_IT_Dev_RW
 Pierre,Durand,Comptable,Finance,GG_Finance_User,DL_Finance_User_R
 Sophie,Bernard,Responsable RH,RH,GG_RH_Manager,DL_RH_Manager_CT
+Lucas,Petit,Technicien,IT,GG_IT_Tech,DL_IT_Tech_RW
+Emma,Moreau,Analyste,Finance,GG_Finance_Analyst,DL_Finance_Analyst_RW
 "@
     
     $csvPath = Join-Path $PWD.Path "exemple_utilisateurs.csv"
     $csvContent | Out-File -FilePath $csvPath -Encoding UTF8
     Write-Host "Fichier CSV d'exemple créé : $csvPath" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Contenu du fichier :" -ForegroundColor Cyan
+    Write-Host $csvContent -ForegroundColor Gray
+    
+    Read-Host "Appuyez sur Entrée pour continuer"
 }
 
 # ============================================================================
-# LANCEMENT DU SCRIPT
+# VÉRIFICATIONS ET LANCEMENT
 # ============================================================================
 
 # Vérification des privilèges administrateur
@@ -818,7 +834,13 @@ if (!(Get-Module -Name ActiveDirectory -ListAvailable)) {
     exit 1
 }
 
-# Création du fichier CSV d'exemple si demandé
+# Message de bienvenue
+Show-Banner
+Write-Host "Bienvenue dans le script d'administration Active Directory !" -ForegroundColor Green
+Write-Host "Ce script vous permettra de créer une structure AD complète." -ForegroundColor White
+Write-Host ""
+
+# Proposition de créer un fichier CSV d'exemple
 $createSample = Read-Host "Voulez-vous créer un fichier CSV d'exemple ? (O/N)"
 if ($createSample -match '^[Oo]) {
     Create-SampleCSV
