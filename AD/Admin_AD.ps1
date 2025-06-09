@@ -3,7 +3,7 @@
 # ============================================================================
 # Description : Script interactif pour créer des OU, groupes et utilisateurs AD
 # Auteur : DlnSys
-# Version : 3.0 - Workflow optimisé
+# Version : 3.0
 # ============================================================================
 
 # Import du module Active Directory
