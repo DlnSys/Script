@@ -2,8 +2,8 @@
 # SCRIPT POWERSHELL - ADMINISTRATION ACTIVE DIRECTORY
 # ============================================================================
 # Description : Script interactif pour créer des OU, groupes et utilisateurs AD
-# Auteur : DlnSys
-# Version : 2.0
+# Auteur : Administrateur système
+# Version : 1.0
 # ============================================================================
 
 # Import du module Active Directory
