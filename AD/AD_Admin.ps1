@@ -2,8 +2,8 @@
 # SCRIPT POWERSHELL - ADMINISTRATION ACTIVE DIRECTORY
 # ============================================================================
 # Description : Script interactif pour créer des OU, groupes et utilisateurs AD
-# Auteur : DlnSys
-# Version : 1.3 - Modifications de workflow pour GG/DL
+# Auteur : Administrateur système
+# Version : 1.4 - Nouveau format CSV utilisateurs
 # ============================================================================
 
 # Import du module Active Directory
@@ -587,7 +587,7 @@ function Associate-DLToGG {
 }
 
 # ============================================================================
-# ÉTAPE 7 : IMPORTATION DES UTILISATEURS
+# ÉTAPE 7 : IMPORTATION DES UTILISATEURS - VERSION MODIFIÉE
 # ============================================================================
 
 function Import-Users {
@@ -598,9 +598,9 @@ function Import-Users {
     
     # Demande du chemin du fichier CSV
     Write-Host "Format CSV attendu :" -ForegroundColor Cyan
-    Write-Host "prenom,nom,fonction,Department_OU,GroupToAdd1,GroupToAdd2" -ForegroundColor Cyan
+    Write-Host "prenom,nom,Department_OU,GroupGlobaux1,GroupGlobaux2,DomainLocal1,DomainLocal2,DomainLocal3" -ForegroundColor Cyan
     Write-Host "Exemple :"
-    Write-Host "Jean,Dupont,Administrateur,IT,GG_IT_Admin,DL_IT_Admin_CT" -ForegroundColor Gray
+    Write-Host "Jean,Dupont,IT,GG_IT_Admin,GG_IT_Support,DL_IT_Admin_CT,DL_IT_Admin_RW,DL_IT_Admin_R" -ForegroundColor Gray
     Write-Host ""
     
     do {
@@ -660,7 +660,7 @@ function Import-Users {
             Write-Host "OU de destination non trouvée pour $($user.Department_OU). Choisissez manuellement :" -ForegroundColor Yellow
             do {
                 $choixOU = Read-Host "Choisissez l'OU (1-$($Global:OUList.Count))"
-            } while ($choixOU -notmatch '^\d+$' -or [int]$choixOU -lt 1 -or [int]$choixOU -gt $Global:OUList.Count)
+            } while ($choixOU -notmatch '^\d+ -or [int]$choixOU -lt 1 -or [int]$choixOU -gt $Global:OUList.Count)
             
             $selectedOU = $Global:OUList[[int]$choixOU - 1]
             $ouDestination = "OU=$selectedOU,OU=$Global:OUPrincipale,$($Global:DomainInfo.DN)"
@@ -675,7 +675,6 @@ function Import-Users {
                 SamAccountName = "$($user.prenom).$($user.nom)".ToLower()
                 UserPrincipalName = $email
                 EmailAddress = $email
-                Title = $user.fonction
                 Path = $ouDestination
                 AccountPassword = $Global:MotDePasseGenerique
                 ChangePasswordAtLogon = $true
@@ -685,15 +684,28 @@ function Import-Users {
             New-ADUser @userParams -ErrorAction Stop
             Write-Log "Utilisateur créé avec succès : $($userParams.Name) | Email : $email" "SUCCESS"
             
-            # Ajout aux groupes
+            # Préparation de la liste des groupes à ajouter avec validation
             $groupsToAdd = @()
-            if (![string]::IsNullOrWhiteSpace($user.GroupToAdd1)) { $groupsToAdd += $user.GroupToAdd1 }
-            if (![string]::IsNullOrWhiteSpace($user.GroupToAdd2)) { $groupsToAdd += $user.GroupToAdd2 }
             
+            # Ajout des groupes globaux
+            if (![string]::IsNullOrWhiteSpace($user.GroupGlobaux1)) { $groupsToAdd += $user.GroupGlobaux1 }
+            if (![string]::IsNullOrWhiteSpace($user.GroupGlobaux2)) { $groupsToAdd += $user.GroupGlobaux2 }
+            
+            # Ajout des groupes domain local
+            if (![string]::IsNullOrWhiteSpace($user.DomainLocal1)) { $groupsToAdd += $user.DomainLocal1 }
+            if (![string]::IsNullOrWhiteSpace($user.DomainLocal2)) { $groupsToAdd += $user.DomainLocal2 }
+            if (![string]::IsNullOrWhiteSpace($user.DomainLocal3)) { $groupsToAdd += $user.DomainLocal3 }
+            
+            # Ajout aux groupes avec validation d'existence
             foreach ($groupName in $groupsToAdd) {
                 try {
+                    # Vérification de l'existence du groupe avant ajout
+                    $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
                     Add-ADGroupMember -Identity $groupName -Members $userParams.SamAccountName -ErrorAction Stop
                     Write-Log "Utilisateur '$($userParams.SamAccountName)' ajouté au groupe '$groupName'" "SUCCESS"
+                }
+                catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+                    Write-Log "Le groupe '$groupName' n'existe pas et sera ignoré pour l'utilisateur '$($userParams.SamAccountName)'" "WARNING"
                 }
                 catch {
                     Write-Log "Erreur lors de l'ajout au groupe '$groupName' : $($_.Exception.Message)" "ERROR"
@@ -852,7 +864,7 @@ function Show-Menu {
 }
 
 # ============================================================================
-# EXEMPLE DE FICHIER CSV
+# EXEMPLE DE FICHIER CSV - VERSION MODIFIÉE
 # ============================================================================
 
 function Create-SampleCSV {
@@ -862,13 +874,7 @@ function Create-SampleCSV {
     Write-Host ""
     
     $csvContent = @"
-prenom,nom,fonction,Department_OU,GroupToAdd1,GroupToAdd2
-Jean,Dupont,Administrateur Système,IT,GG_IT_Admin,DL_IT_Admin_CT
-Marie,Martin,Développeuse,IT,GG_IT_Dev,DL_IT_Dev_RW
-Pierre,Durand,Comptable,Finance,GG_Finance_User,DL_Finance_User_R
-Sophie,Bernard,Responsable RH,RH,GG_RH_Manager,DL_RH_Manager_CT
-Lucas,Petit,Technicien,IT,GG_IT_Tech,DL_IT_Tech_RW
-Emma,Moreau,Analyste,Finance,GG_Finance_Analyst,DL_Finance_Analyst_RW
+prenom,nom,Department_OU,GroupGlobaux1,GroupGlobaux2,DomainLocal1,DomainLocal2,DomainLocal3
 "@
     
     $csvPath = Join-Path $PWD.Path "exemple_utilisateurs.csv"
