@@ -660,7 +660,7 @@ function Import-Users {
             Write-Host "OU de destination non trouvée pour $($user.Department_OU). Choisissez manuellement :" -ForegroundColor Yellow
             do {
                 $choixOU = Read-Host "Choisissez l'OU (1-$($Global:OUList.Count))"
-            } while ($choixOU -notmatch '^\d+ -or [int]$choixOU -lt 1 -or [int]$choixOU -gt $Global:OUList.Count)
+            } while ($choixOU -notmatch '^\d+$' -or [int]$choixOU -lt 1 -or [int]$choixOU -gt $Global:OUList.Count)
             
             $selectedOU = $Global:OUList[[int]$choixOU - 1]
             $ouDestination = "OU=$selectedOU,OU=$Global:OUPrincipale,$($Global:DomainInfo.DN)"
