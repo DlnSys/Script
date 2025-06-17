@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Script de sécurisation SSH interactif pour Debian/Ubuntu
+# Auteur: DlnSys
 # Version: 1.0
 
 set -euo pipefail

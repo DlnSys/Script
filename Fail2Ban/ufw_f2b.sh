@@ -3,7 +3,7 @@
 #===============================================================================
 # Script de Sécurisation Serveur - UFW & Fail2ban
 # Description: Configuration interactive de UFW et Fail2ban pour Debian/Ubuntu
-# Auteur: Assistant Claude
+# Auteur: DlnSys
 # Version: 1.0
 #===============================================================================
 

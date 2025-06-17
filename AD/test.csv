@@ -1,6 +1,0 @@
-prenom,nom,fonction,Department_OU,GroupToAdd1,GroupToAdd2
-Jean,Dupont,Administrateur,IT,GG_IT_Admin,DL_IT_Admin_CT
-Claire,Martin,Comptable,Finance,GG_Finance_Compta,DL_Finance_Compta_R
-Paul,Leroy,Technicien,Support,GG_Support_Tech,DL_Support_Tech_RW
-Sophie,Bernard,RH,RH,GG_RH_Gestion,DL_RH_Gestion_RW
-

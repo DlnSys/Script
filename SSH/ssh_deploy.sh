@@ -2,7 +2,7 @@
 
 # Script de déploiement automatisé de clés SSH
 # Auteur: DlnSys
-# Version: 1.0
+# Version: 1.1 - Correction du test de vérification avec la bonne clé
 
 set -euo pipefail
 
@@ -161,16 +161,85 @@ handle_ssh_key() {
             2)
                 # Utilisation d'une clé existante
                 echo
-                read -p "Chemin vers la clé publique [${DEFAULT_KEY_PATH}.pub] : " key_input
-                PUBLIC_KEY_PATH="${key_input:-${DEFAULT_KEY_PATH}.pub}"
+                echo "Recherche des clés SSH disponibles..."
                 
-                if [[ ! -f "$PUBLIC_KEY_PATH" ]]; then
-                    log "ERROR" "Clé publique introuvable : $PUBLIC_KEY_PATH"
+                # Recherche de toutes les clés publiques dans ~/.ssh/
+                declare -a available_keys=()
+                while IFS= read -r -d '' key_file; do
+                    available_keys+=("$key_file")
+                done < <(find "$HOME/.ssh" -name "*.pub" -type f -print0 2>/dev/null | sort -z)
+                
+                if [[ ${#available_keys[@]} -eq 0 ]]; then
+                    log "ERROR" "Aucune clé publique trouvée dans $HOME/.ssh/"
                     continue
                 fi
                 
-                log "SUCCESS" "Clé publique trouvée : $PUBLIC_KEY_PATH"
-                break
+                echo -e "${GREEN}Clés SSH disponibles :${NC}"
+                for i in "${!available_keys[@]}"; do
+                    local key_file="${available_keys[i]}"
+                    local key_name=$(basename "$key_file")
+                    local key_size=""
+                    local key_type=""
+                    local key_comment=""
+                    
+                    # Extraire les informations de la clé
+                    if [[ -f "$key_file" ]]; then
+                        # Obtenir la taille et le type avec ssh-keygen -l
+                        local key_info=$(ssh-keygen -l -f "$key_file" 2>/dev/null || echo "")
+                        if [[ -n "$key_info" ]]; then
+                            key_size=$(echo "$key_info" | awk '{print $1}')
+                            key_type=$(echo "$key_info" | awk '{print $4}' | tr -d '()')
+                        fi
+                        
+                        # Extraire le commentaire directement du fichier de clé publique
+                        # Le commentaire est tout ce qui suit le dernier espace dans la ligne
+                        key_comment=$(awk '{for(i=3;i<=NF;i++) printf "%s ", $i; print ""}' "$key_file" 2>/dev/null | sed 's/[[:space:]]*$//')
+                        
+                        # Si pas de commentaire ou commentaire vide, utiliser un placeholder
+                        [[ -z "$key_comment" ]] && key_comment="(sans commentaire)"
+                    fi
+                    
+                    printf "%2d) %-25s" $((i+1)) "$key_name"
+                    [[ -n "$key_size" ]] && printf " (%s bits)" "$key_size"
+                    [[ -n "$key_type" ]] && printf " (%s)" "$key_type"
+                    [[ -n "$key_comment" ]] && printf " - %s" "$key_comment"
+                    echo
+                done
+                
+                echo "$((${#available_keys[@]}+1))) Saisir un chemin personnalisé"
+                echo
+                
+                while true; do
+                    read -p "Choisissez une clé (1-$((${#available_keys[@]}+1))) : " key_choice
+                    
+                    if [[ "$key_choice" =~ ^[0-9]+$ ]] && [[ "$key_choice" -ge 1 ]] && [[ "$key_choice" -le ${#available_keys[@]} ]]; then
+                        # Sélection d'une clé de la liste
+                        PUBLIC_KEY_PATH="${available_keys[$((key_choice-1))]}"
+                        log "SUCCESS" "Clé sélectionnée : $PUBLIC_KEY_PATH"
+                        break 2
+                    elif [[ "$key_choice" -eq $((${#available_keys[@]}+1)) ]]; then
+                        # Saisie manuelle
+                        echo
+                        read -p "Chemin vers la clé publique : " key_input
+                        if [[ -z "$key_input" ]]; then
+                            echo "Chemin vide, retour au menu."
+                            continue
+                        fi
+                        
+                        # Expansion du chemin si nécessaire
+                        PUBLIC_KEY_PATH="${key_input/#\~/$HOME}"
+                        
+                        if [[ ! -f "$PUBLIC_KEY_PATH" ]]; then
+                            log "ERROR" "Clé publique introuvable : $PUBLIC_KEY_PATH"
+                            continue
+                        fi
+                        
+                        log "SUCCESS" "Clé publique trouvée : $PUBLIC_KEY_PATH"
+                        break 2
+                    else
+                        echo "Choix invalide. Veuillez saisir un nombre entre 1 et $((${#available_keys[@]}+1))."
+                    fi
+                done
                 ;;
             *)
                 echo "Choix invalide. Veuillez saisir 1 ou 2."
@@ -178,10 +247,18 @@ handle_ssh_key() {
         esac
     done
     
+    # Vérifier que la clé privée correspondante existe
+    PRIVATE_KEY_PATH="${PUBLIC_KEY_PATH%.pub}"
+    if [[ ! -f "$PRIVATE_KEY_PATH" ]]; then
+        log "ERROR" "Clé privée correspondante introuvable : $PRIVATE_KEY_PATH"
+        exit 1
+    fi
+    
     # Afficher le contenu de la clé publique
     echo
     echo -e "${GREEN}Clé publique à déployer :${NC}"
     echo "$(cat "$PUBLIC_KEY_PATH")"
+    echo -e "${BLUE}Clé privée correspondante :${NC} $PRIVATE_KEY_PATH"
     echo
 }
 
@@ -230,12 +307,13 @@ test_connectivity() {
     local server="$1"
     log "INFO" "Test de connectivité vers $server..."
     
-    # Timeout de 10 secondes pour le test
-    if timeout 10 ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$server" "exit" 2>/dev/null; then
-        log "SUCCESS" "Connexion SSH réussie (clé déjà déployée) : $server"
+    # Test avec la clé spécifique d'abord
+    if timeout 10 ssh -i "$PRIVATE_KEY_PATH" -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$server" "exit" 2>/dev/null; then
+        log "SUCCESS" "Connexion SSH réussie avec la clé spécifique : $server"
         return 0
+    # Test avec méthode par défaut
     elif timeout 10 ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$server" "exit" 2>/dev/null; then
-        log "SUCCESS" "Connexion SSH possible : $server"
+        log "SUCCESS" "Connexion SSH possible (méthode par défaut) : $server"
         return 0
     else
         log "WARNING" "Connexion SSH échouée ou nécessite un mot de passe : $server"
@@ -248,7 +326,7 @@ deploy_key() {
     local server="$1"
     log "INFO" "Déploiement de la clé vers $server..."
     
-    # Utilisation de ssh-copy-id avec options robustes
+    # Utilisation de ssh-copy-id avec la clé spécifique
     if ssh-copy-id -o StrictHostKeyChecking=no -i "$PUBLIC_KEY_PATH" "$server" 2>/dev/null; then
         log "SUCCESS" "Clé déployée avec succès : $server"
         DEPLOY_STATUS+=("SUCCESS:$server")
@@ -260,16 +338,35 @@ deploy_key() {
     fi
 }
 
-# Fonction pour vérifier le déploiement
+# Fonction pour vérifier le déploiement avec la clé spécifique
 verify_deployment() {
     local server="$1"
-    log "INFO" "Vérification du déploiement vers $server..."
+    log "INFO" "Vérification du déploiement vers $server avec la clé spécifique..."
     
-    if timeout 10 ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$server" "echo 'Connexion SSH sans mot de passe réussie'" 2>/dev/null; then
-        log "SUCCESS" "Vérification réussie : $server"
+    # CORRECTION PRINCIPALE : Utiliser la clé privée correspondante
+    if timeout 10 ssh -i "$PRIVATE_KEY_PATH" -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$server" "echo 'Connexion SSH sans mot de passe réussie avec la clé déployée'" 2>/dev/null; then
+        log "SUCCESS" "Vérification réussie avec la clé déployée : $server"
         return 0
     else
-        log "ERROR" "Vérification échouée : $server"
+        log "ERROR" "Vérification échouée avec la clé spécifique : $server"
+        return 1
+    fi
+}
+
+# Fonction pour tester la connexion après déploiement
+test_deployed_key() {
+    local server="$1"
+    
+    log "INFO" "Test final de la clé déployée vers $server..."
+    
+    # Test avec un petit délai pour s'assurer que le déploiement est pris en compte
+    sleep 2
+    
+    if timeout 15 ssh -i "$PRIVATE_KEY_PATH" -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=no "$server" "hostname && echo 'Test de connexion SSH réussi !'" 2>/dev/null; then
+        log "SUCCESS" "Test final réussi - La clé fonctionne parfaitement : $server"
+        return 0
+    else
+        log "WARNING" "Test final échoué - La clé pourrait ne pas fonctionner : $server"
         return 1
     fi
 }
@@ -280,6 +377,7 @@ show_summary() {
     echo -e "${YELLOW}=== RÉCAPITULATIF ===${NC}"
     echo
     echo -e "${BLUE}Clé publique :${NC} $PUBLIC_KEY_PATH"
+    echo -e "${BLUE}Clé privée :${NC} $PRIVATE_KEY_PATH"
     echo -e "${BLUE}Serveurs ciblés :${NC}"
     
     for server in "${SERVERS[@]}"; do
@@ -320,6 +418,13 @@ show_results() {
     
     if [[ $success_count -gt 0 ]]; then
         log "SUCCESS" "Déploiement terminé : $success_count réussi(s), $failed_count échec(s)"
+        echo -e "${BLUE}Pour vous connecter aux serveurs, utilisez :${NC}"
+        for status in "${DEPLOY_STATUS[@]}"; do
+            if [[ "${status%%:*}" == "SUCCESS" ]]; then
+                local server="${status##*:}"
+                echo -e "${GREEN}ssh -i $PRIVATE_KEY_PATH $server${NC}"
+            fi
+        done
     else
         log "ERROR" "Aucun déploiement réussi"
     fi
@@ -357,18 +462,32 @@ main() {
     
     # Test de connectivité et déploiement
     for server in "${SERVERS[@]}"; do
-        echo -e "${BLUE}Traitement de $server...${NC}"
+        echo -e "${BLUE}━━━ Traitement de $server ━━━${NC}"
         
-        # Test de connectivité
+        # Test de connectivité initial
         if ! test_connectivity "$server"; then
-            echo "  Connexion SSH nécessite probablement un mot de passe"
+            echo "  → Connexion SSH nécessite probablement un mot de passe"
         fi
         
-        # Déploiement
+        # Déploiement de la clé
         if deploy_key "$server"; then
-            # Vérification du déploiement
-            sleep 1
-            verify_deployment "$server"
+            echo "  → Clé déployée, vérification en cours..."
+            
+            # Vérification du déploiement avec la bonne clé
+            if verify_deployment "$server"; then
+                echo "  → Vérification réussie"
+                
+                # Test final pour s'assurer que tout fonctionne
+                if test_deployed_key "$server"; then
+                    echo -e "  → ${GREEN}Déploiement totalement réussi !${NC}"
+                else
+                    echo -e "  → ${YELLOW}Déploiement réussi mais test final incertain${NC}"
+                fi
+            else
+                echo -e "  → ${RED}Problème lors de la vérification${NC}"
+            fi
+        else
+            echo -e "  → ${RED}Échec du déploiement${NC}"
         fi
         
         echo
