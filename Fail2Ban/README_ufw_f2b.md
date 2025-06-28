@@ -1,6 +1,6 @@
 # 🛡️ UFW & Fail2Ban — Sécurisation interactive du serveur
 
-**Auteur** : Assistant Claude  
+**Auteur** : DlnSys  
 **Version** : 1.0  
 **Plateformes** : Debian / Ubuntu (sudo requis)
 
