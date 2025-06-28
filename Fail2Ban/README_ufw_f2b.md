@@ -94,7 +94,7 @@ sudo ./ufw_f2b.sh
 
 ## 🧑‍💻 Auteur
 
-Script initialement généré par **Assistant Claude**, avec l’intention d’optimiser la sécurité serveur pour les non-spécialistes comme les admins confirmés.
+Script initialement généré par **DlnSys**, avec l’intention d’optimiser la sécurité serveur pour les non-spécialistes comme les admins confirmés.
 
 ---
 
