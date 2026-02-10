@@ -6,14 +6,14 @@ log() { echo -e "\n[+] $*\n"; }
 # --- Root obligatoire ---
 if [[ "$EUID" -ne 0 ]]; then
   echo "[!] Ce script doit être lancé en root."
-  echo "➡ Lance: su -   puis: TARGET_USER=dln bash setup.sh"
+  echo "➡ Lance: su -   puis: TARGET_USER=dln bash setup_shell.sh"
   exit 1
 fi
 
 # --- Utilisateur cible obligatoire ---
 TARGET_USER="${TARGET_USER:-}"
 if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
-  echo "[!] Tu dois définir TARGET_USER (ex: TARGET_USER=dln bash setup.sh)"
+  echo "[!] Tu dois définir TARGET_USER (ex: TARGET_USER=dln bash setup_shell.sh)"
   exit 1
 fi
 
