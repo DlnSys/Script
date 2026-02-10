@@ -31,7 +31,7 @@ P10K_DIR="${USER_HOME}/.oh-my-zsh/custom/themes/powerlevel10k"
 FONT_DIR="${USER_HOME}/.local/share/fonts"
 
 log "Utilisateur cible : $TARGET_USER"
-log "HOME cible       : $USER_HOME"
+log "HOME cible        : $USER_HOME"
 
 # ---------- 1) sudo ----------
 log "Installation de sudo (si nécessaire)"
@@ -42,10 +42,10 @@ log "Ajout de $TARGET_USER au groupe sudo"
 usermod -aG sudo "$TARGET_USER"
 
 # ---------- 2) Paquets ----------
-log "Installation des paquets de base"
-apt install -y zsh git curl wget neofetch htop fontconfig lsd tmux
+log "Installation des paquets de base (remplacement de neofetch par fastfetch)"
+apt install -y zsh git curl wget fastfetch htop fontconfig lsd tmux
 
-# ---------- 3) Oh My Zsh (dans le HOME user) ----------
+# ---------- 3) Oh My Zsh ----------
 log "Installation Oh My Zsh (si absent) pour $TARGET_USER"
 if [[ ! -d "$OHMY_DIR" ]]; then
   su - "$TARGET_USER" -c 'RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"'
@@ -62,9 +62,12 @@ else
 fi
 
 # ---------- 5) .zshrc ----------
-log "Configuration de $ZSHRC (thème + neofetch + alias + ton LS_COLORS)"
+log "Configuration de $ZSHRC"
 touch "$ZSHRC"
 chown "$TARGET_USER:$TARGET_USER" "$ZSHRC"
+
+# Nettoyage des anciens blocs Neofetch si présents
+sed -i '/# >>> DLN: NEOFETCH >>>/,/# <<< DLN: NEOFETCH <<</d' "$ZSHRC"
 
 # Thème p10k
 if grep -q '^ZSH_THEME=' "$ZSHRC"; then
@@ -73,24 +76,12 @@ else
   echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> "$ZSHRC"
 fi
 
-# Neofetch en interactif uniquement
-if ! grep -q 'DLN: NEOFETCH' "$ZSHRC"; then
-  cat >> "$ZSHRC" <<'EOF'
-
-# >>> DLN: NEOFETCH >>>
-if [[ -o interactive ]]; then
-  command -v neofetch >/dev/null 2>&1 && neofetch
-fi
-# <<< DLN: NEOFETCH <<<
-EOF
-fi
-
 # Alias ufull
 if ! grep -q 'alias ufull=' "$ZSHRC"; then
   echo 'alias ufull="sudo apt update && sudo apt full-upgrade"' >> "$ZSHRC"
 fi
 
-# Bloc LS_COLORS + aliases (ton style)
+# Bloc LS_COLORS + aliases
 BLOCK_BEGIN="# >>> DLN: LS COLORS + LSD ALIASES >>>"
 BLOCK_END="# <<< DLN: LS COLORS + LSD ALIASES <<<"
 
@@ -120,13 +111,34 @@ else
   alias la='ls -A --color=auto'
 fi
 # <<< DLN: LS COLORS + LSD ALIASES <<<
+EOF
 
+# Ajout du bloc FASTFETCH à la toute fin
+log "Ajout de la configuration Fastfetch"
+# On nettoie d'abord l'ancien bloc Fastfetch s'il existe pour éviter les doublons
+sed -i '/# >>> DLN: FASTFETCH >>>/,/# <<< DLN: FASTFETCH <<</d' "$ZSHRC"
+
+cat >> "$ZSHRC" <<'EOF'
+
+# To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
+[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+
+# >>> DLN: FASTFETCH >>>
+autoload -Uz add-zsh-hook
+run_fastfetch_once() {
+  if command -v fastfetch >/dev/null 2>&1; then
+    fastfetch --color-keys green --color-title cyan --bright-color true --pipe false
+  fi
+  add-zsh-hook -d precmd run_fastfetch_once
+}
+add-zsh-hook precmd run_fastfetch_once
+# <<< DLN: FASTFETCH <<<
 EOF
 
 chown "$TARGET_USER:$TARGET_USER" "$ZSHRC"
 
-# ---------- 6) Polices MesloLGS NF (dans le HOME user) ----------
-log "Installation des polices MesloLGS NF dans $FONT_DIR"
+# ---------- 6) Polices ----------
+log "Installation des polices MesloLGS NF"
 mkdir -p "$FONT_DIR"
 chown -R "$TARGET_USER:$TARGET_USER" "$(dirname "$FONT_DIR")"
 
@@ -143,46 +155,29 @@ for f in "${fonts[@]}"; do
     su - "$TARGET_USER" -c "wget -qO '$FONT_DIR/$f' '$url'"
   fi
 done
-
 su - "$TARGET_USER" -c "fc-cache -f >/dev/null 2>&1 || true"
 
-# ---------- 7) tmux : ta config (dans le HOME user) ----------
-log "Écriture de $TMUXCONF (ta config tmux)"
+# ---------- 7) tmux ----------
+log "Écriture de $TMUXCONF"
 cat > "$TMUXCONF" <<'EOF'
-# Prefix Alt+a
 unbind C-b
 set -g prefix M-a
 bind M-a send-prefix
-
-# Réactivité 
 set -s escape-time 0
-
-# Souris
 set -g mouse on
-
-# Numérotation à partir de 1
 set -g base-index 1
 setw -g pane-base-index 1
-
-# Split vertical 
 bind v split-window -h
 unbind '"'
-
-# Split Horizontal
 bind h split-window -v
 unbind %
-
-# Recharge la config a la volé
-bind r source-file ~/.tmux.conf \;display "Config rechargée !"
-
-# Couleur
+bind r source-file ~/.tmux.conf \; display "Config rechargée !"
 set -g default-terminal "screen-256color"
 EOF
-
 chown "$TARGET_USER:$TARGET_USER" "$TMUXCONF"
 
-# ---------- 8) zsh par défaut pour le user ----------
-log "Définition de zsh comme shell par défaut pour $TARGET_USER"
+# ---------- 8) Shell par défaut ----------
+log "Définition de zsh comme shell par défaut"
 chsh -s "$(command -v zsh)" "$TARGET_USER" || true
 
 log "Terminé ✅"
